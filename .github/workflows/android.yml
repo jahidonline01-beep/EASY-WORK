@@ -1,0 +1,124 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Prepare Source Structure
+        run: |
+          echo "Organizing and verifying directory structure..."
+          mkdir -p src/components src/data public scripts
+
+          for file in Header.tsx NameGenerator.tsx TwoFactorAuth.tsx EmailAccess.tsx FacebookUidChecker.tsx IpTracker.tsx Toast.tsx; do
+            if [ -f "$file" ]; then
+              cp -f "$file" src/components/
+            elif [ -f "components/$file" ]; then
+              cp -f "components/$file" src/components/
+            fi
+          done
+
+          for file in *.tsx; do
+            if [ -f "$file" ] && [ "$file" != "App.tsx" ] && [ "$file" != "main.tsx" ]; then
+              cp -f "$file" src/components/ || true
+            fi
+          done
+
+          if [ -f "usaNames.ts" ]; then
+            cp -f "usaNames.ts" src/data/
+          elif [ -f "data/usaNames.ts" ]; then
+            cp -f "data/usaNames.ts" src/data/
+          fi
+
+          [ -f "App.tsx" ] && cp -f "App.tsx" src/App.tsx || true
+          [ -f "main.tsx" ] && cp -f "main.tsx" src/main.tsx || true
+          [ -f "index.css" ] && cp -f "index.css" src/index.css || true
+
+          [ -f "icon.svg" ] && cp -f "icon.svg" public/icon.svg || true
+          [ -f "logo.png" ] && cp -f "logo.png" public/logo.png || true
+          [ -f "icon-192.png" ] && cp -f "icon-192.png" public/icon-192.png || true
+          [ -f "icon-512.png" ] && cp -f "icon-512.png" public/icon-512.png || true
+          [ -f "icon.png" ] && cp -f "icon.png" public/icon.png || true
+          [ -f "favicon-64.png" ] && cp -f "favicon-64.png" public/favicon-64.png || true
+          [ -f "apple-touch-icon.png" ] && cp -f "apple-touch-icon.png" public/apple-touch-icon.png || true
+          [ -f "manifest.json" ] && cp -f "manifest.json" public/manifest.json || true
+          [ -f "make-android-icons.py" ] && cp -f "make-android-icons.py" scripts/make-android-icons.py || true
+
+          sed -i 's|src="/main.tsx"|src="./src/main.tsx"|g' index.html || true
+          sed -i 's|src="./main.tsx"|src="./src/main.tsx"|g' index.html || true
+          sed -i 's|src="/src/main.tsx"|src="./src/main.tsx"|g' index.html || true
+
+          echo "Verified Source Tree:"
+          ls -la src/ || true
+          ls -la src/components/ || true
+          ls -la src/data/ || true
+          ls -la public/ || true
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build Web Assets
+        run: npm run build
+
+      - name: Setup Java JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Capacitor Android Tooling and App Icon
+        run: |
+          npm install --save-dev @capacitor/core @capacitor/cli @capacitor/android
+          npx cap init "Easy Work" "com.easywork.app" --web-dir "dist"
+          npx cap add android || true
+          mkdir -p resources
+          if [ -f public/icon-512.png ]; then
+            cp public/icon-512.png resources/icon.png
+          elif [ -f public/logo.png ]; then
+            cp public/logo.png resources/icon.png
+          fi
+          npx cap sync android
+          pip install --quiet pillow || true
+          python3 scripts/make-android-icons.py || true
+          echo "android.enableJetifier=true" >> android/gradle.properties
+          printf "\nconfigurations.all {\n    resolutionStrategy {\n        dependencySubstitution {\n            substitute module('org.jetbrains.kotlin:kotlin-stdlib-jdk7') using module('org.jetbrains.kotlin:kotlin-stdlib:1.8.22')\n            substitute module('org.jetbrains.kotlin:kotlin-stdlib-jdk8') using module('org.jetbrains.kotlin:kotlin-stdlib:1.8.22')\n        }\n    }\n}\n" >> android/app/build.gradle
+
+      - name: Build Android APK
+        run: |
+          cd android
+          chmod +x gradlew
+          if ! grep -q "Easy-Work.apk" app/build.gradle; then
+            printf "\nandroid.applicationVariants.all { variant ->\n    variant.outputs.all { output ->\n        output.outputFileName = \"Easy-Work.apk\"\n    }\n}\n" >> app/build.gradle
+          fi
+          ./gradlew assembleDebug --no-daemon
+          FOUND="$(find app/build/outputs/apk -name '*.apk' | head -n 1)"
+          if [ -z "$FOUND" ]; then
+            echo "APK not found"
+            exit 1
+          fi
+          cp -f "$FOUND" "$GITHUB_WORKSPACE/Easy-Work.apk"
+          ls -lh "$GITHUB_WORKSPACE/Easy-Work.apk"
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Easy-Work
+          path: Easy-Work.apk
+          if-no-files-found: error
+          compression-level: 0
