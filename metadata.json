@@ -1,0 +1,6 @@
+{
+  "name": "Easy Work",
+  "description": "Professional toolkit featuring USA female name generator, 2FA authenticator, instant email access, and Facebook UID live checker.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
